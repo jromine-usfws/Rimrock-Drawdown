@@ -13,7 +13,7 @@ output:
 
 # Readme
 
-This is an R Notebook. If you'd like to pre-rendered figures, read a summary of analysis and view code, please open the html file in a browser. If you'd like to run the code yourself downloard and open the rmd file in rstudio or any other integrated development environment that supports r and markdown. 
+This is an R Notebook. If you'd like to pre-rendered figures, read a summary of analysis and view code, please open the html file in a browser. If you'd like to run the code yourself download and open the rmd file in rstudio or any other integrated development environment that supports r and markdown. 
 
 
 ```{r, message = FALSE, warning = FALSE}
@@ -279,6 +279,8 @@ ggplot(redds_sf_i, aes(lag2_rim_af, detrend_redds))+geom_point()+geom_smooth(met
 
 ```
 No relationship.
+
+
 
 # Summary / Conclusions
 
