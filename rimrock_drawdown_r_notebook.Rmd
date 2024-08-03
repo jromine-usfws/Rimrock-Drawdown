@@ -1,0 +1,294 @@
+---
+title: "R Notebook Rimrock Drawdown"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    toc: yes
+    toc_collapsed: no
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+# Readme
+
+This is an R Notebook. If you'd like to pre-rendered figures, read a summary of analysis and view code, please open the html file in a browser. If you'd like to run the code yourself downloard and open the rmd file in rstudio or any other integrated development environment that supports r and markdown. 
+
+
+```{r, message = FALSE, warning = FALSE}
+require(cowplot)
+require(plotly)
+require(effects)
+require(mice)
+require(zoo)
+require(tidyverse)
+require(lubridate)
+require(magrittr)
+require(pracma)
+```
+# Rationale
+
+This notebook collects any computational work associated with understanding effects to bull trout from drawdowns of the Rimrock Resevoir. It supports s7 consultations, recovery projects and general questions about ecology, climate and water management. Most of the work is just for note-taking or exploring ideas, not to be shared widely or to draw strong conclusions from.
+
+# Redd Counts
+
+Redd count data is used to assess population abundance. While (a) observer error, (b) variation in redd characteristics among life-history forms, (c) redd superimposition, and (d) skewed sex ratios can introduce bias or error, redd counts are the best available long term data to estimate trends in abundance. In the Yakima basin redd count data has been consistently monitored in multiple index reaches for nearly 40 years. 
+
+This section contains summaries and visualization of redd count data for the Rimrockpopulation complex. Summaries for other populations and several analyses that attempt to parse the spatial and temporal scales at which redd count data are autocorrelated, are available in the Yakima basin-wide analysis notebook
+
+Data are from:
+Divens (2024) Yakima Basin Bull Trout Spawning Surveys 2023. WDFW.
+
+## Data Import and QC
+### Import
+```{r, warning=FALSE, message=FALSE}
+# Data Input
+
+# Divens 2024 provides the raw data (yay), but the format is not ideal for input, we already have completed some manual clean up. The data and associated readmes are provided in the excel workbook titled redd_counts.xlsx in this directory.
+
+# Here we import the data and roll up (or break down) all redd counts to the local population scale. This is the largest spatial scale at which population size is determined by local birth/deaths and may also fit well to the population genetic definition of a population.
+
+redds <- readxl::read_xlsx("data/redd_counts.xlsx", sheet = 2)
+
+# now lets make this data long
+redd_long <- redds %>%
+  pivot_longer(cols = -c(local_pop, sub_pop, pop_complex, current_life_history), names_to = "year", values_to = "redds_sub_pop")
+
+#now, roll up the small scale counts to the local pops level
+redds_up <- redd_long %>%
+  group_by(local_pop, year) %>%
+  summarise(redds = sum(redds_sub_pop, na.rm = TRUE)) %>%
+  ungroup() 
+
+redds_up %<>% 
+  left_join(distinct(select(redd_long, local_pop, pop_complex), .keep_all = TRUE)) %>%
+  mutate(year = as.numeric(year)) %>%
+  filter(pop_complex=="Rimrock")
+
+```
+
+### Filtering
+
+__When to start time series?__  
+
+While the complete Yakima redd count dataset provided by Divens (2024) goes back to 1984, not all populations and index reaches were surveyed at that time. 
+
+For Rimrock populations the first reliable redd count data begins in  
+  _South Fork Tieton:_ 1994  
+  _Indian Creek:_ 1988  
+  _North Fork Tieton:_ 2007   
+
+__Low Counts__  
+
+The metadata provided with the redd counts includes a list of years where the data are expected to undercount values that would have been observed under normal conditions. For example high flows may reduce redd observation, or fire exclusions reduce redd counts to zero. If these errors are temporally autocorrelated this may produce false trend signals. Errors in individual years will reduce our power to identify correlations between populations or environmental/management variables.
+
+The basin-wide analysis found that temporal autocorrelation in undercounted years is present in the data, but has little impact on basin-wide trends. However, at smaller spatial scales (e.g. this analysis), we should __exclude all years with undercounts from further analysis__. 
+
+```{r}
+# import data 
+bad_years <- readxl::read_xlsx("data/redd_counts.xlsx", sheet = 4)
+
+#create an id for matching
+bad_years %<>%
+  mutate(by_id = paste(year, local_pop, sep = "_") )
+
+by_ids <- bad_years$by_id
+
+# set bad years to missing
+redds_up %<>%
+  mutate(by_id = paste(year, local_pop, sep = "_"),
+         redds_na = case_when(by_id %in% by_ids ~ NA_real_,
+                           TRUE ~ redds)) %>%
+  select(-by_id)
+
+
+```
+
+__Filtering Summary__  
+For each population, the filtered dataset excludes all years before surveying in index reaches began, and all years that are noted in the metadata provided in Divens (2024) as potential undercounts.
+
+# Redd Count Summary
+
+Now Let's plot the filtered redd count data for each population.
+
+```{r, message=FALSE, warning=FALSE, fig.height= 9, fig.width=4}
+
+ggplot(data = filter(drop_na(redds_up, redds_na)), aes(x = year, y = redds))+
+  geom_point()+
+  geom_line()+
+  geom_smooth(span = 5)+
+  theme_bw()+xlab("Year")+ylab("Redds")+
+  scale_x_continuous(breaks = seq(1987, 2023, 4), minor_breaks = seq(1987, 2023, 2)) +
+  facet_grid(rows = vars(local_pop), scales = "free_y")
+
+```
+
+Since we are interested in Rimrock-wide trends, let's also plot the combined redd count data for SF Tieton and Indian. We will exclude NF Tieton since fewer data are available. We will also exclude years before reliable counts were available in SF Tieton (1994)
+
+```{r, message=FALSE, warning=FALSE}
+redds_sf_i <- redds_up %>%
+  filter(local_pop %in% c("SF_Tieton", "Indian")) %>%
+  group_by(year) %>%
+  summarise(redds_total = sum(redds_na)) %>%
+  drop_na(redds_total) %>%
+  filter(year > 1993)
+
+ggplot(data = redds_sf_i, aes(x = year, y = redds_total))+
+  geom_point()+
+  geom_line()+
+  geom_smooth(span = 5)+
+  theme_bw()+xlab("Year")+ylab("Redds SF Tieon + Indian Creek")+
+  scale_x_continuous(breaks = seq(1993, 2023, 4), minor_breaks = seq(1993, 2023, 2))
+```
+
+# Rimrock Operations
+
+Unlike other reservoirs in the Yakima Project, Rimrock Lake was not a natural lake, and operations at Tieton Dam can draw Rimrock down to extremely low levels.  Complete drawdowns of Rimrock Lake occurred four times, (1926, 1931, 1973, and 1979), and are associated with collapse of the Rimrock kokanee fishery the following year (Mongillo & Faulconer, 1980).  The kokanee fishery did not recover from the 1973 drawdown for six years, despite stocking, and 95 – 99% of the population was lost to entrainment during the 1979 drawdown (Mongillo & Faulconer, 1980, pp. 31, 34).  Analysis of kokanee catch records also indicate that deep drawdowns, defined as those below ~30,000 af, measurably reduce kokanee abundance and productivity (Mongillo & Faulconer, 1980, p. 31), prompting the Systems Operation Advisory Committee to recommend maintaining Rimrock above this level in 2001. Rimrock has been drafted beneath 30,000 af eight times since 1981, but only once since the 2001 recommendation
+
+Rimrock has been under so called "flip-flop" operations since 1981. Currently, the pool is maintained at 127,000 acre-feet until August 10th to provide connectivity over a barrier waterfall at SF Tieton River (Thomas, 2001). This corresponds to a pool elevation of 2,894 msl, where a barrier waterfall as SF Tieton forms every year. This elevation keeps the barrier waterfall to 5 feet, a height where bull trout passage is assumed to be unimpaired (Thomas 2001). To avoid any waterfall forming, the pool must be maintained above 131,000 acre feet. 
+
+Let's make a  figure of Rimrock pool elevations over time to better understand operations and how they interact with recommendations to maintain connectivity and limit entrainment. Data below is from Jan 1 1981 to Nov 27 2023
+
+```{r, message=FALSE, warning=FALSE}
+# here we import the data, pulled from the BoR hydromet page from 1981 to present (Nov 27 2023)
+
+#rim af = RIMROCK RESERVOIR,TIETON RIVER AND WEATHER STATION Reservoir Water Storage, acre-feet
+#rim fb = RIMROCK RESERVOIR,TIETON RIVER AND WEATHER STATION Reservoir Water Surface Elevation, feet
+#rim gd = RIMROCK RESERVOIR,TIETON RIVER AND WEATHER STATION Average Stream Stage, feet
+#rim qd = RIMROCK RESERVOIR,TIETON RIVER AND WEATHER STATION Average Stream Discharge, cfs
+#rim qu = RIMROCK RESERVOIR,TIETON RIVER AND WEATHER STATION Estimated Average Unregulated Flow, cfs
+
+rimrock <- read_tsv("data/rimrock_hydromet.txt", comment = "#")
+
+#next let's clean thing up, we'll create a month-day column to compare data across years
+rimrock %<>%
+  mutate(yday = as.Date(yday(DateTime), origin = "2050-01-01"),
+         year = year(DateTime))
+
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+# ggplot(rimrock)+geom_line(aes(yday, rim_af, color = factor(year)), alpha = 0.5)+
+#   scale_x_date(date_labels = "%b", breaks = "1 month")+scale_color_viridis_d(guide = "none")+
+#   geom_smooth(aes(yday, rim_af), color = "black", size = 2)+
+#   theme_classic()+xlab("Date")+ylab("Rimrock Capacity (acre-feet)")+
+#   #geom_vline(aes(xintercept = mdy("08-10-2050")))+
+#   geom_hline(aes(yintercept = 127000))+
+#   annotate(geom= "text", x = mdy("04-10-2050"), y = 123000, label = "Barrier Falls Form")+
+#   #annotate(geom= "text", x = mdy("08-08-2050"), y = 50000, label = "Upstream Spawning\nMigration Complete", angle = 90)
+#   annotate("rect", xmin = mdy("06-01-2050"), xmax = mdy("08-10-2050"), ymin = -Inf, ymax = Inf, fill = "#FFEA46FF" , alpha = 0.2)+
+#   annotate("rect", xmin = mdy("08-10-2050"), xmax = mdy("10-15-2050"), ymin = -Inf, ymax = Inf, fill = "#00336FFF" , alpha = 0.2) +
+#   annotate(geom= "text", x = mdy("07-01-2050"), y = 50000, label = "Upstream Spawning\nMigration", angle = 90) +
+#   annotate(geom= "text", x = mdy("09-8-2050"), y = 50000, label = "Adult Downstream \n Post-Spawning Migration", angle = 90)
+
+# for BA
+ggplot(rimrock)+geom_line(aes(yday, rim_af, color = factor(year)), alpha = 0.5)+
+  scale_x_date(date_labels = "%b", breaks = "1 month")+scale_color_viridis_d(guide = "none")+
+  geom_smooth(aes(yday, rim_af), color = "black", size = 2)+
+  theme_classic()+xlab("Date")+ylab("Rimrock Capacity (acre-feet)")+
+  scale_y_continuous(breaks = c(30000, 50000, 100000, 127000, 150000, 200000))+
+  #geom_vline(aes(xintercept = mdy("08-10-2050")))+
+  geom_hline(aes(yintercept = 127000), linetype =2)+
+  geom_hline(aes(yintercept = 30000), linetype =2)+
+  annotate(geom= "text", x = mdy("04-10-2050"), y = 123000, label = "Barrier Falls Form")+
+  annotate(geom= "text", x = mdy("04-10-2050"), y = 26000, label = "2001 SOAC Recommended Minimum Low Pool")+
+  #annotate(geom= "text", x = mdy("08-08-2050"), y = 50000, label = "Upstream Spawning\nMigration Complete", angle = 90)
+  annotate("rect", xmin = mdy("06-01-2050"), xmax = mdy("08-10-2050"), ymin = -Inf, ymax = Inf, fill = "#FFEA46FF" , alpha = 0.2)+
+  annotate("rect", xmin = mdy("09-15-2050"), xmax = mdy("10-15-2050"), ymin = -Inf, ymax = Inf, fill = "#00336FFF" , alpha = 0.2)# +
+#  annotate(geom= "text", x = mdy("07-01-2050"), y = 50000, label = "Upstream Spawning\nMigration", angle = 90) +
+#  annotate(geom= "text", x = mdy("09-8-2050"), y = 50000, label = "Adult Downstream \n Post-Spawning Migration", angle = 90)
+```
+Figure Caption: Volume of Rimrock Lake through the year demonstrating winter drawdown, and the overlap of flows with migration timing and formation of a passage barrier at the mouth of South Fork Tieton River.
+Colored lines are individual years from 1981- 2023, with more recent years in lighter (yellow) colors.  Yellow period from June to mid-August approximates peak upstream migration, blue period from mid-August to October approximates peak downstream, post-spawn migration of adults.  Heavy black line is loess-smooth of all years.  Data from Bureau of Reclamation Hydromet.
+
+# Correlation of Pool Height and Redd Counts
+
+Finally, we examine the relationship between Rimrock pool height and redd counts. 
+
+Some notes on analysis:  
+(1) Data: Since we are interested in Rimrock-wide effects, we will use the combined, filtered redd count data for Indian Creek and South Fork Tieton River. Years with known data quality issues are excluded (see filtering section above for details), and NF Tieton is excluded because the data set only begins in 2006.   
+(2) Lags: Drawdown overlaps occurs during spawning season and outmigration. Drawdown is expected to have little impact on redd counts during that year. Instead the potential immpacts of drawdowns are expected to be delayed for one or several years, depending on the mechanism of effect. For example, effects to prey base may only be realized in redd count data following 2 or 3 years.  
+(3) Explanatory Variable: Following the approach of Mongillo et al 1980, we will use the minimum pool reached in a year as the explanatory variable.
+(4) Trends: There is a strong declining trend in the available data. This may reduce power to identify relationships between depth of drawdown and redd counts in following years. We will also consider detrended data.
+
+## Data Prep
+
+```{r}
+# create min_pool
+rimrock %>%
+  group_by(year) %>%
+  slice_min(rim_af, with_ties = F) ->min_pool_year
+
+# add lagged pool height data
+redds_sf_i %<>%
+  left_join(select(min_pool_year, year, rim_af))%>%
+  mutate(lag1_year = year -1) %>%
+  left_join(select(min_pool_year, year, lag1_rim_af=rim_af), by = c("lag1_year"= "year")) %>%
+  mutate(lag2_year = year -2) %>%
+  left_join(select(min_pool_year, year, lag2_rim_af=rim_af), by = c("lag2_year"= "year")) 
+
+# add detrended redd counts
+redds_sf_i %<>%
+  mutate(detrend_redds = detrend(redds_sf_i$redds_total))  #note shuold probably do this manually at some point
+
+
+# qc check on detrend function, note: looks good!
+# ggplot(data = redds_sf_i)+
+#   geom_point( aes(x = year, y = redds_total))+
+#   geom_line( aes(x = year, y = redds_total))+
+#   geom_smooth( aes(x = year, y = redds_total),method = "lm")+
+#   geom_point(aes(x = year, y = detrend_redds))+
+#   theme_bw()+xlab("Year")+ylab("Redds SF Tieon + Indian Creek")+
+#   scale_x_continuous(breaks = seq(1993, 2023, 4), minor_breaks = seq(1993, 2023, 2))+
+#   geom_hline(aes(yintercept = 0))
+```
+
+## Year 1 Lag
+First let's look at the impact of drawdown in the year immediately following it.
+
+First we will use the raw data:
+```{r, message = FALSE, warning=FALSE}
+ggplot(redds_sf_i, aes(lag1_rim_af, redds_total))+geom_point()+geom_smooth(method ="lm")+theme_bw()+xlab("Rimrock Low Pool (acre-feet)")+ylab("Indian Creek + SF Tieton Redds \n 1 year lag")
+summary(lm(redds_total~lag1_rim_af, data = redds_sf_i))
+
+```
+
+Then we will use the detrended data
+
+```{r, message = FALSE, warning=FALSE}
+ggplot(redds_sf_i, aes(lag1_rim_af, detrend_redds))+geom_point()+geom_smooth(method ="lm")+theme_bw()+xlab("Rimrock Low Pool (acre-feet)")+ylab("Detrended Indian Creek + SF Tieton Redds \n 1 year lag")
+summary(lm(detrend_redds~lag1_rim_af, data = redds_sf_i))
+
+```
+
+## Year 2 Lag
+Now let's look at the impact of drawdown 2 years after
+
+First we will use the raw data:
+```{r, message = FALSE, warning=FALSE}
+ggplot(redds_sf_i, aes(lag2_rim_af, redds_total))+geom_point()+geom_smooth(method ="lm")+theme_bw()+xlab("Rimrock Low Pool (acre-feet)")+ylab("Indian Creek + SF Tieton Redds \n 2 year lag")
+
+```
+No relationship, let's look at the detrended data. 
+
+
+```{r, message = FALSE, warning=FALSE}
+ggplot(redds_sf_i, aes(lag2_rim_af, detrend_redds))+geom_point()+geom_smooth(method ="lm")+theme_bw()+xlab("Rimrock Low Pool (acre-feet)")+ylab("Detrended Indian Creek + SF Tieton Redds \n 2 year lag")
+
+```
+No relationship.
+
+# Summary / Conclusions
+
+There is a relationship between the depth of drawdown and the number of bull trout redds in SF Tieton and Indian Creek the following year. This relationship is apparent from raw redd count data, but only become statistically significant (p = 0.03) when using the residuals from a linear model that accounts for the overall decline in redd counts over the period analyzed. This relationship is shown below.
+
+```{r, message = FALSE, warning=FALSE}
+ggplot(redds_sf_i, aes(lag1_rim_af, detrend_redds))+geom_point()+geom_smooth(method ="lm")+theme_bw()+xlab("Rimrock Low Pool (acre-feet)")+ylab("Detrended Indian Creek + SF Tieton Redds \n 1 year lag") + annotate(geom= "text", x = 25000, y = 100, label = "p = 0.0342")
+```
+
+If we use this trendline to make some generalizations, since 1994 drawdowns below the 2001 SOAC reccomendation to maintain Rimrock pool above 30k acre-feet are associated with a decline the following year of ~50 redds in SF Tieton and Indian Creek. This decline may be due to entrainment, impacts to prey base, changes in connectivity, or some combination of these factors. Alternatively this relationship may be driven by a correlation between environmental factors that reduce redd counts and the need for deeper drawdowns.
+
+
+
