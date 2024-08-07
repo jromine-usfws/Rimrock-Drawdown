@@ -17,15 +17,26 @@ This is an R Notebook. If you'd like to pre-rendered figures, read a summary of 
 
 
 ```{r, message = FALSE, warning = FALSE}
-require(cowplot)
-require(plotly)
-require(effects)
-require(mice)
-require(zoo)
-require(tidyverse)
-require(lubridate)
-require(magrittr)
-require(pracma)
+
+# ==== functions ========== 
+ipak <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg)) 
+    install.packages(new.pkg, dependencies = TRUE)
+  sapply(pkg, require, character.only = TRUE)
+}
+
+libs <- c('cowplot', 'plotly','effects','mice','zoo','tidyverse','lubridate', 'magrittr','pracma')
+ipak(libs)
+# require(cowplot)
+# require(plotly)
+# require(effects)
+# require(mice)
+# require(zoo)
+# require(tidyverse)
+# require(lubridate)
+# require(magrittr)
+# require(pracma)
 ```
 # Rationale
 
@@ -250,7 +261,8 @@ First let's look at the impact of drawdown in the year immediately following it.
 
 First we will use the raw data:
 ```{r, message = FALSE, warning=FALSE}
-ggplot(redds_sf_i, aes(lag1_rim_af, redds_total))+geom_point()+geom_smooth(method ="lm")+theme_bw()+xlab("Rimrock Low Pool (acre-feet)")+ylab("Indian Creek + SF Tieton Redds \n 1 year lag")
+ggplot(redds_sf_i, aes(lag1_rim_af, redds_total))+geom_point()+geom_smooth(method ="lm")+
+  theme_bw()+xlab("Rimrock Low Pool (acre-feet)")+ylab("Indian Creek + SF Tieton Redds \n 1 year lag")
 summary(lm(redds_total~lag1_rim_af, data = redds_sf_i))
 
 ```
@@ -258,7 +270,8 @@ summary(lm(redds_total~lag1_rim_af, data = redds_sf_i))
 Then we will use the detrended data
 
 ```{r, message = FALSE, warning=FALSE}
-ggplot(redds_sf_i, aes(lag1_rim_af, detrend_redds))+geom_point()+geom_smooth(method ="lm")+theme_bw()+xlab("Rimrock Low Pool (acre-feet)")+ylab("Detrended Indian Creek + SF Tieton Redds \n 1 year lag")
+ggplot(redds_sf_i, aes(lag1_rim_af, detrend_redds))+geom_point()+geom_smooth(method ="lm")+
+  theme_bw()+xlab("Rimrock Low Pool (acre-feet)")+ylab("Detrended Indian Creek + SF Tieton Redds \n 1 year lag")
 summary(lm(detrend_redds~lag1_rim_af, data = redds_sf_i))
 
 ```
